@@ -47,6 +47,8 @@ export default function View() {
   const [isLikeLoading, setIsLikeLoading] = useState(false);
   // 좋아요 요청 실패 시 버튼 아래에 노출할 메시지
   const [likeErrorMessage, setLikeErrorMessage] = useState("");
+  // 에피그램 삭제 요청 중 중복 클릭을 막기 위한 상태
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // 인증 실패 시 토큰을 정리하고 로그인 화면으로 보낸다.
   const redirectToLogin = () => {
@@ -192,6 +194,47 @@ export default function View() {
     }
   };
 
+  const deleteEpigram = async () => {
+    if (!id || isDeleting) {
+      return;
+    }
+
+    const isConfirmed = window.confirm("에피그램을 삭제할까요?");
+    if (!isConfirmed) {
+      return;
+    }
+
+    const token = localStorage.getItem("accessToken");
+    if (!token) {
+      alert("삭제는 로그인 후 이용할 수 있습니다.");
+      redirectToLogin();
+      return;
+    }
+
+    setIsDeleting(true);
+
+    try {
+      await requestJsonOrThrow(`${API_ENDPOINTS.epigrams}/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+        errorMessage: "에피그램 삭제에 실패했습니다.",
+      });
+
+      navigate("/feed", { replace: true });
+    } catch (error) {
+      if (isApiError(error) && isAuthStatus(error.status)) {
+        alert("로그인 정보가 만료되었습니다. 다시 로그인해 주세요.");
+        redirectToLogin();
+      } else if (isApiError(error)) {
+        alert(error.message);
+      } else {
+        alert("에피그램 삭제 중 오류가 발생했습니다.");
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // 상세 데이터 요청 중에는 로딩 UI를 먼저 노출
   if (isLoading) {
     return (
@@ -240,7 +283,9 @@ export default function View() {
         <ViewFeedItem
           feedItem={feedItem}
           onToggleLike={toggleLike}
+          onDelete={deleteEpigram}
           isLikeLoading={isLikeLoading}
+          isDeleting={isDeleting}
           likeErrorMessage={likeErrorMessage}
         />
         <Comments epigramId={id} />

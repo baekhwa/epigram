@@ -22,6 +22,7 @@ function App() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/feed" element={<Feed />} />
         <Route path="/create" element={<Create />} />
+        <Route path="/edit/:id" element={<Create />} />
         <Route path="/view/:id" element={<View />} />
         <Route path="*" element={<Notfound />} />
       </Routes>

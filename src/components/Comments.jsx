@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import CommentItem from "./CommentItem";
-import image from "/category-01.jpg";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   API_ENDPOINTS,
   isAbortError,
@@ -8,71 +7,132 @@ import {
   isAuthStatus,
   requestJsonOrThrow,
 } from "../api/client";
-import { useLocation, useNavigate } from "react-router-dom";
+import CommentItem from "./CommentItem";
+import image from "/category-01.jpg";
 
-// API 응답의 댓글 데이터를 UI 컴포넌트가 필요한 형식으로 변환한다.
-const mapCommentToItem = (comment, userId) => ({
-  id: comment.id,
-  category: image, // API에서 카테고리 이미지가 없으면 기본값 사용
-  author: comment.author?.name || comment.authorName || "알 수 없음",
-  createdAt: formatTime(comment.createdAt),
-  // 현재 로그인 사용자와 댓글 작성자가 같으면 내 댓글로 표시
-  isMine: String(comment.authorId) === userId,
-  body: comment.body || comment.content || "",
-});
-
-function extractComments(data) {
+// API 응답 모양이 배열, { comments: [] }, { list: [] } 중 무엇이든
+// 화면에서는 항상 배열로 다루기 위한 함수입니다.
+function getCommentList(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.comments)) return data.comments;
   if (Array.isArray(data?.list)) return data.list;
   return [];
 }
 
-// ISO 8601 형식의 타임스탐프를 상대 시간(예: "1시간 전")으로 변환한다.
-function formatTime(isoString) {
-  try {
-    const date = new Date(isoString);
-    const now = new Date();
-    const diff = Math.floor((now - date) / 1000); // 초 단위
+// 서버에서 받은 작성 시간을 "방금 전", "3분 전" 같은 글자로 바꿉니다.
+function getTimeText(createdAt) {
+  if (!createdAt) return "방금 전";
 
-    if (diff < 60) return "방금 전";
-    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
-    if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+  const date = new Date(createdAt);
+  const diffSeconds = Math.floor((new Date() - date) / 1000);
 
-    // 일주일 이상은 날짜 표시
-    return date.toLocaleDateString("ko-KR");
-  } catch {
-    return "알 수 없음";
-  }
+  if (Number.isNaN(date.getTime())) return "방금 전";
+  if (diffSeconds < 60) return "방금 전";
+  if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}분 전`;
+  if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)}시간 전`;
+  if (diffSeconds < 604800) return `${Math.floor(diffSeconds / 86400)}일 전`;
+
+  return date.toLocaleDateString("ko-KR");
+}
+
+// API 댓글 데이터를 CommentItem 컴포넌트가 쓰기 쉬운 모양으로 바꿉니다.
+function makeCommentItem(comment, options = {}) {
+  const myUserId = localStorage.getItem("userId");
+
+  // 서버 응답마다 작성자 id 이름이 다를 수 있어서 여러 후보를 확인합니다.
+  const authorId =
+    comment.author?.id ??
+    comment.writer?.id ??
+    comment.user?.id ??
+    comment.authorId ??
+    comment.writerId ??
+    comment.userId;
+
+  return {
+    id: comment.id,
+    category: image,
+    author:
+      comment.author?.nickname ||
+      comment.writer?.nickname ||
+      comment.user?.nickname ||
+      comment.author?.name ||
+      comment.writer?.name ||
+      comment.user?.name ||
+      comment.authorName ||
+      localStorage.getItem("userName") ||
+      "익명",
+    createdAt: getTimeText(comment.createdAt),
+    isMine: options.isMine || comment.isMine || String(authorId) === myUserId,
+    body: comment.content || comment.body || "",
+  };
 }
 
 export default function Comments({ epigramId }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // 댓글 목록과 입력값을 컴포넌트 상태로 관리
+  // 댓글 목록
   const [comments, setComments] = useState([]);
+  // 새 댓글 입력값
   const [inputValue, setInputValue] = useState("");
-  // 댓글 조회 로딩 상태
-  const [isLoading, setIsLoading] = useState(Boolean(epigramId));
-  // 댓글 조회 에러 메시지
-  const [errorMessage, setErrorMessage] = useState("");
-  // 댓글 작성 중 로딩 상태 (중복 제출 방지)
+  // 댓글 목록을 불러오는 중인지
+  const [isLoading, setIsLoading] = useState(false);
+  // 새 댓글을 등록하는 중인지
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 현재 수정 중인 댓글 id. null이면 수정 중인 댓글이 없습니다.
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  // 현재 삭제 중인 댓글 id. null이면 삭제 중인 댓글이 없습니다.
+  const [deletingCommentId, setDeletingCommentId] = useState(null);
+  // 댓글 목록 조회 실패 메시지
+  const [errorMessage, setErrorMessage] = useState("");
 
-  // 댓글 목록을 API에서 조회한다. epigramId 변경 시마다 새로 조회한다.
+  // 로그인 정보가 없거나 만료되었을 때 로그인 화면으로 보냅니다.
+  const goLogin = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("userId");
+
+    navigate("/login", {
+      state: { from: location.pathname },
+    });
+  };
+
+  // 댓글 작성/수정/삭제는 로그인이 필요하므로 토큰을 먼저 확인합니다.
+  const getTokenOrLogin = () => {
+    const token = localStorage.getItem("accessToken");
+
+    if (!token) {
+      alert("로그인 후 이용할 수 있습니다.");
+      goLogin();
+      return "";
+    }
+
+    return token;
+  };
+
+  // API가 401/403을 주면 인증 문제로 보고 로그인 화면으로 보냅니다.
+  const handleAuthError = (error) => {
+    if (isApiError(error) && isAuthStatus(error.status)) {
+      alert("로그인 정보가 만료되었습니다. 다시 로그인해 주세요.");
+      goLogin();
+      return true;
+    }
+
+    return false;
+  };
+
+  // epigramId가 바뀔 때마다 해당 에피그램의 댓글 목록을 다시 불러옵니다.
   useEffect(() => {
     if (!epigramId) return;
 
     const controller = new AbortController();
 
-    const fetchComments = async () => {
+    async function loadComments() {
       setIsLoading(true);
       setErrorMessage("");
 
       try {
-        // 댓글 목록 조회: GET /epigrams/:id/comments?limit=6
         const { data } = await requestJsonOrThrow(
           `${API_ENDPOINTS.getComments(epigramId)}?limit=6`,
           {
@@ -81,175 +141,236 @@ export default function Comments({ epigramId }) {
           },
         );
 
-        // API 응답을 UI 모델로 변환해 상태에 반영
-        const userId = localStorage.getItem("userId");
-        const mappedComments = extractComments(data).map((comment) =>
-          mapCommentToItem(comment, userId),
-        );
-        setComments(mappedComments);
+        // 서버 댓글 배열을 화면용 댓글 배열로 변환해서 저장합니다.
+        setComments(getCommentList(data).map(makeCommentItem));
       } catch (error) {
-        // 취소된 요청은 에러 UI를 띄우지 않는다.
-        if (isAbortError(error)) {
-          return;
-        }
+        // 컴포넌트가 사라지거나 epigramId가 바뀌어서 취소된 요청은 무시합니다.
+        if (isAbortError(error)) return;
 
-        if (isApiError(error)) {
-          setErrorMessage(error.message);
-        } else {
-          setErrorMessage("댓글을 불러오는 중 오류가 발생했습니다.");
-        }
+        setErrorMessage(
+          isApiError(error)
+            ? error.message
+            : "댓글을 불러오는 중 오류가 발생했습니다.",
+        );
       } finally {
         if (!controller.signal.aborted) {
           setIsLoading(false);
         }
       }
-    };
+    }
 
-    fetchComments();
+    loadComments();
 
-    // 언마운트/epigramId 변경 시 요청 취소
+    // 컴포넌트가 사라질 때 진행 중인 댓글 조회 요청을 취소합니다.
     return () => controller.abort();
   }, [epigramId]);
 
-  // 댓글 작성 요청을 API로 전송한다.
-  const addComment = async () => {
-    const nextBody = inputValue.trim();
+  // 새 댓글 등록: form submit 또는 Enter 입력 시 실행됩니다.
+  const handleSubmit = async (event) => {
+    event.preventDefault();
 
-    if (!nextBody) {
-      return;
-    }
+    const content = inputValue.trim();
+    if (!content || isSubmitting) return;
 
-    // 이미 제출 중인 경우 중복 제출 방지
-    if (isSubmitting) {
-      return;
-    }
+    const token = getTokenOrLogin();
+    if (!token) return;
 
     setIsSubmitting(true);
 
     try {
-      const token = localStorage.getItem("accessToken");
-      if (!token) {
-        alert("댓글 작성은 로그인 후 이용할 수 있습니다.");
-        navigate("/login", {
-          state: { from: location.pathname },
-        });
-        return;
-      }
-
-      // 댓글 작성: POST /epigrams/:id/comments
-      const { data: responseData } = await requestJsonOrThrow(
-        `https://fe-project-epigram-api.vercel.app/22-kim/comments`,
-
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjgwOSwidGVhbUlkIjoiMjIta2ltIiwic2NvcGUiOiJhY2Nlc3MiLCJpYXQiOjE3Nzg3NDE3NzYsImV4cCI6MTc3ODc0MzU3NiwiaXNzIjoic3AtZXBpZ3JhbSJ9.mL49ilVQeyV9fcFhyaQG8FfEQ9apPC10WjGSc3sCGak`,
-          },
-          body: JSON.stringify({
-            epigramId: epigramId,
-            isPrivate: false,
-            content: nextBody,
-            // 필요시 추가 필드 (예: parentCommentId 등)
-          }),
-          errorMessage: "댓글 작성에 실패했습니다.",
+      const { data } = await requestJsonOrThrow(API_ENDPOINTS.comments, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+        body: JSON.stringify({
+          epigramId: Number(epigramId),
+          isPrivate: false,
+          content,
+        }),
+        errorMessage: "댓글 작성에 실패했습니다.",
+      });
 
-      // 낙관적 업데이트: 방금 작성한 댓글을 즉시 목록에 추가
-      const userId = localStorage.getItem("userId");
-      const savedComment = responseData?.comment || responseData;
-      const newComment = mapCommentToItem(savedComment, userId);
-      setComments((prev) => [newComment, ...prev]);
+      // 등록 성공 후 새 댓글을 목록 맨 앞에 추가합니다.
+      const savedComment = data?.comment || data;
+      setComments((prevComments) => [
+        makeCommentItem(savedComment, { isMine: true }),
+        ...prevComments,
+      ]);
       setInputValue("");
     } catch (error) {
-      if (isApiError(error) && isAuthStatus(error.status)) {
-        alert("로그인 정보가 만료되었습니다. 다시 로그인해 주세요.");
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
-        localStorage.removeItem("isLoggedIn");
-        localStorage.removeItem("userId");
-        navigate("/login", {
-          state: { from: location.pathname },
-        });
-      } else if (isApiError(error)) {
-        alert(error.message);
-      } else {
-        alert("댓글 작성 중 오류가 발생했습니다.");
-      }
+      if (handleAuthError(error)) return;
+
+      alert(
+        isApiError(error)
+          ? error.message
+          : "댓글 작성 중 오류가 발생했습니다.",
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleTextareaKeyDown = (event) => {
-    // 한글 조합(IME) 중 Enter 입력은 제출로 처리하지 않음
-    if (event.nativeEvent.isComposing) {
-      return;
-    }
+  // 댓글 수정: CommentItem에서 저장 버튼을 눌렀을 때 호출됩니다.
+  const handleUpdateComment = async (commentId, nextBody) => {
+    const content = nextBody.trim();
+    if (!content || editingCommentId) return false;
 
-    // Shift+Enter는 줄바꿈, Enter는 댓글 등록
+    const token = getTokenOrLogin();
+    if (!token) return false;
+
+    setEditingCommentId(commentId);
+
+    try {
+      const { data } = await requestJsonOrThrow(
+        API_ENDPOINTS.comment(commentId),
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ content }),
+          errorMessage: "댓글 수정에 실패했습니다.",
+        },
+      );
+
+      const updatedComment = data?.comment || data;
+
+      // 수정된 댓글 id와 같은 항목만 새 내용으로 바꿉니다.
+      setComments((prevComments) =>
+        prevComments.map((comment) =>
+          comment.id === commentId
+            ? {
+                ...comment,
+                ...makeCommentItem(updatedComment, { isMine: true }),
+                body: content,
+              }
+            : comment,
+        ),
+      );
+
+      return true;
+    } catch (error) {
+      if (handleAuthError(error)) return false;
+
+      alert(
+        isApiError(error)
+          ? error.message
+          : "댓글 수정 중 오류가 발생했습니다.",
+      );
+      return false;
+    } finally {
+      setEditingCommentId(null);
+    }
+  };
+
+  // 댓글 삭제: 확인창을 거친 뒤 DELETE 요청을 보냅니다.
+  const handleDeleteComment = async (commentId) => {
+    if (deletingCommentId) return;
+
+    const isConfirmed = window.confirm("댓글을 삭제할까요?");
+    if (!isConfirmed) return;
+
+    const token = getTokenOrLogin();
+    if (!token) return;
+
+    setDeletingCommentId(commentId);
+
+    try {
+      await requestJsonOrThrow(API_ENDPOINTS.comment(commentId), {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        errorMessage: "댓글 삭제에 실패했습니다.",
+      });
+
+      // 삭제된 댓글 id를 제외한 나머지만 목록에 남깁니다.
+      setComments((prevComments) =>
+        prevComments.filter((comment) => comment.id !== commentId),
+      );
+    } catch (error) {
+      if (handleAuthError(error)) return;
+
+      alert(
+        isApiError(error)
+          ? error.message
+          : "댓글 삭제 중 오류가 발생했습니다.",
+      );
+    } finally {
+      setDeletingCommentId(null);
+    }
+  };
+
+  // textarea에서 Enter는 등록, Shift+Enter는 줄바꿈으로 사용합니다.
+  const handleKeyDown = (event) => {
+    if (event.nativeEvent.isComposing) return;
+
     if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      addComment();
+      handleSubmit(event);
     }
   };
 
   return (
     <section className="mx-auto mt-10 mb-24 w-full max-w-4xl px-4 sm:px-6">
-      <header className="mb-5 flex items-end justify-between gap-4 border-b border-gray-200 pb-4">
-        <div className="w-full">
-          <h3 className="text-xl font-semibold text-gray-900">
-            댓글 <span className="text-gray-400">({comments.length})</span>
-          </h3>
-          <span className="inline-flex rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">
-            <img
-              src={image}
-              alt="카테고리 이미지"
-              className="mr-2 h-4 w-4 rounded-full"
-            />
-          </span>
+      <header className="mb-5 border-b border-gray-200 pb-4">
+        <h3 className="text-xl font-semibold text-gray-900">
+          댓글 <span className="text-gray-400">({comments.length})</span>
+        </h3>
+
+        <form className="mt-3 flex gap-2" onSubmit={handleSubmit}>
           <textarea
-            className="mt-3 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 focus:border-gray-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
-            placeholder="100자 이내로 입력해주세요."
+            className="min-h-24 flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 focus:border-gray-400 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
+            placeholder="100자 이내로 입력해 주세요."
             maxLength={100}
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
-            onKeyDown={handleTextareaKeyDown}
+            onKeyDown={handleKeyDown}
             disabled={isSubmitting}
           />
-        </div>
+          <button
+            type="submit"
+            className="h-10 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white transition hover:bg-gray-700 disabled:bg-gray-300"
+            disabled={isSubmitting || !inputValue.trim()}
+          >
+            등록
+          </button>
+        </form>
       </header>
 
-      {/* 댓글 조회 중 로딩 상태 */}
       {isLoading && (
-        <div className="text-center py-8 text-gray-500">
+        <div className="py-8 text-center text-gray-500">
           댓글을 불러오는 중입니다...
         </div>
       )}
 
-      {/* 댓글 조회 실패 시 에러 메시지 */}
       {errorMessage && (
         <div className="mb-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">
           {errorMessage}
         </div>
       )}
 
-      {/* 댓글 목록 렌더링 */}
       {!isLoading && comments.length > 0 && (
         <ul className="space-y-4" aria-label="댓글 목록">
           {comments.map((comment) => (
             <li key={comment.id}>
-              <CommentItem comment={comment} />
+              <CommentItem
+                comment={comment}
+                isDeleting={deletingCommentId === comment.id}
+                isSaving={editingCommentId === comment.id}
+                onDelete={handleDeleteComment}
+                onUpdate={handleUpdateComment}
+              />
             </li>
           ))}
         </ul>
       )}
 
-      {/* 댓글이 없는 경우 안내 메시지 */}
       {!isLoading && comments.length === 0 && !errorMessage && (
-        <div className="text-center py-8 text-gray-500">
-          첫 번째 댓글을 달아보세요.
+        <div className="py-8 text-center text-gray-500">
+          첫 번째 댓글을 남겨보세요.
         </div>
       )}
     </section>

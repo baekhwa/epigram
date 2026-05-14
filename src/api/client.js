@@ -7,6 +7,8 @@ export const API_ENDPOINTS = {
   epigrams: `${API_BASE_URL}${PROJECT_PATH}/epigrams`,
   signIn: `${API_BASE_URL}${PROJECT_PATH}/auth/signIn`,
   signUp: `${API_BASE_URL}${PROJECT_PATH}/auth/signUp`,
+  comments: `${API_BASE_URL}${PROJECT_PATH}/comments`,
+  comment: (commentId) => `${API_BASE_URL}${PROJECT_PATH}/comments/${commentId}`,
   // 댓글은 에피그램 id를 동적으로 받아서 생성되므로 함수로 제공한다.
   getComments: (epigramId) =>
     `${API_BASE_URL}${PROJECT_PATH}/epigrams/${epigramId}/comments`,

@@ -4,7 +4,9 @@ import ActionMemu from "./ActionMemu";
 export default function ViewFeedItem({
   feedItem,
   onToggleLike,
+  onDelete,
   isLikeLoading,
+  isDeleting,
   likeErrorMessage,
 }) {
   return (
@@ -62,7 +64,13 @@ export default function ViewFeedItem({
           </p>
         )}
         {/* 내 글일 때만 액션 메뉴 노출 */}
-        {feedItem.isMine && <ActionMemu />}
+        {feedItem.isMine && (
+          <ActionMemu
+            epigramId={feedItem.id}
+            isDeleting={isDeleting}
+            onDelete={onDelete}
+          />
+        )}
       </article>
     </section>
   );
