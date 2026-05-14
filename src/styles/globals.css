@@ -1,0 +1,14 @@
+body {
+  font-family: "Pretendard", serif;
+  height: 100%;
+  background-color: #f5f7fa;
+}
+button {
+  cursor: pointer;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+  @apply w-full p-4  border border-[#dcdcdc] rounded-xl text-xl;
+}

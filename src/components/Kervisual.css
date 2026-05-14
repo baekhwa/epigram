@@ -1,0 +1,84 @@
+.animation-title {
+  text-align: center;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  background: linear-gradient(120deg, #5195ee 0%, #c4b5fd 45%, #8e80e3 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: titleShimmer 3.6s ease-in-out infinite;
+}
+
+@keyframes titleShimmer {
+  0% {
+    background-position: 0% 50%;
+    filter: brightness(0.96);
+  }
+  50% {
+    background-position: 100% 50%;
+    filter: brightness(1.06);
+  }
+  100% {
+    background-position: 0% 50%;
+    filter: brightness(0.96);
+  }
+}
+
+.animation__line {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 0;
+  overflow: hidden;
+}
+.animation__line--item {
+  display: block;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    #dcdcdc,
+    #f2f2f2,
+    #ffffff,
+    transparent,
+    #dcdcdc,
+    #f2f2f2,
+    #ffffff,
+    transparent
+  );
+  background-size: 200% 100%;
+  background-position: 0% 0%;
+  transform: scaleX(0);
+  transform-origin: center;
+  animation:
+    lineLoop 1.8s cubic-bezier(0.16, 1, 0.3, 1) 1 forwards,
+    flowGradient 5s linear infinite;
+}
+
+@keyframes lineLoop {
+  0% {
+    transform: scaleX(0);
+    transform-origin: center;
+    opacity: 0;
+    filter: brightness(1.25);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1);
+    transform-origin: center;
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+@keyframes flowGradient {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: -200% 0%;
+  }
+}
